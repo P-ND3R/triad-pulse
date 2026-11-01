@@ -1,0 +1,758 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}[hidden]{display:none!important}</style>
+<title>Triad Pulse</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600&family=IBM+Plex+Mono:wght@400&display=swap">
+<style>
+  /* Layout: full-bleed WebGL stage, settings panel top-right, transport + meters pinned to the lower edge. Single dark look by design. */
+  :root {
+    --void: #02040a;
+    --panel: rgba(6, 12, 26, 0.88);
+    --ink: #cfe4ff;
+    --dim: #5a7aa8;
+    --signal: #4da3ff;
+    --hot: #bfe6ff;
+    --line: rgba(77, 163, 255, 0.22);
+    --display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+    color-scheme: dark;
+  }
+  html, body { height: 100%; }
+  body { background: var(--void); color: var(--ink); overflow: hidden; font-family: var(--mono); }
+  #stage { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+
+  .hud {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 20px calc(20px + env(safe-area-inset-bottom, 0px));
+    display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px;
+    pointer-events: none;
+    background: linear-gradient(to top, rgba(2, 4, 10, 0.9), rgba(2, 4, 10, 0));
+  }
+  .brand h1 {
+    margin: 0; font-family: var(--display); font-weight: 600; font-size: 1.6rem;
+    letter-spacing: 0.32em; text-transform: uppercase; color: var(--hot);
+  }
+  .brand p { margin: 4px 0 0; font-size: 0.72rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dim); max-width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; pointer-events: auto; }
+  .nodes { display: flex; flex-wrap: wrap; gap: 6px; }
+  .node {
+    font-family: var(--display); font-size: 0.74rem; letter-spacing: 0.08em;
+    min-width: 2.4em; text-align: center; padding: 4px 6px;
+    border: 1px solid var(--line); border-radius: 3px; color: var(--dim);
+    transition: color 0.12s, border-color 0.12s, box-shadow 0.12s;
+  }
+  .node.on { color: var(--hot); border-color: var(--signal); box-shadow: 0 0 14px rgba(77, 163, 255, 0.55); }
+  .btn {
+    font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+    background: transparent; color: var(--dim); border: 1px solid var(--line); border-radius: 3px;
+    padding: 5px 10px; cursor: pointer; transition: color 0.15s, border-color 0.15s;
+  }
+  .btn:hover { color: var(--ink); }
+  .btn[aria-pressed="true"] { color: var(--hot); border-color: var(--signal); }
+  .btn:focus-visible { outline: 1px solid var(--hot); outline-offset: 3px; }
+  .meters { display: flex; gap: 4px; align-items: flex-end; height: 26px; }
+  .meter { width: 7px; height: 100%; background: rgba(77, 163, 255, 0.1); border-radius: 1px; position: relative; overflow: hidden; }
+  .meter i { position: absolute; inset: 0; background: var(--signal); transform-origin: bottom; transform: scaleY(0); }
+  .meter.beat i { background: var(--hot); }
+  .drop {
+    position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none;
+    font-family: var(--display); letter-spacing: 0.3em; text-transform: uppercase; color: var(--hot);
+    background: rgba(2, 4, 10, 0.7); border: 2px dashed var(--signal); opacity: 0; transition: opacity 0.15s;
+  }
+  .drop.show { opacity: 1; }
+
+  /* Settings panel */
+  .lil-gui {
+    --background-color: var(--panel);
+    --widget-color: rgba(77, 163, 255, 0.12);
+    --hover-color: rgba(77, 163, 255, 0.2);
+    --focus-color: rgba(77, 163, 255, 0.28);
+    --number-color: var(--hot);
+    --string-color: var(--hot);
+    --text-color: var(--ink);
+    --title-background-color: rgba(10, 22, 48, 0.95);
+    --title-text-color: var(--hot);
+    --font-family: var(--mono);
+    --font-size: 11px;
+    --width: 290px;
+  }
+  .lil-gui.autoPlace {
+    top: env(safe-area-inset-top, 0px);
+    right: env(safe-area-inset-right, 0px);
+    max-height: calc(100% - 150px - env(safe-area-inset-top, 0px));
+    backdrop-filter: blur(8px);
+  }
+  @media (max-width: 480px) { .lil-gui.autoPlace { --width: min(290px, 92vw); } }
+</style>
+</head>
+<body>
+
+<canvas id="stage" aria-label="Glowing blue dots at the corners of a triangle, lighting up one at a time in clockwise order"></canvas>
+<div class="drop" id="drop">Drop audio to react</div>
+
+<div class="hud">
+  <div class="brand">
+    <h1>Triad</h1>
+    <p id="status">Clockwise cycle &middot; tempo 100 bpm</p>
+  </div>
+  <div class="controls">
+    <div class="nodes" id="chips"></div>
+    <div class="meters" aria-hidden="true">
+      <span class="meter" id="mBass"><i></i></span>
+      <span class="meter" id="mMid"><i></i></span>
+      <span class="meter" id="mHigh"><i></i></span>
+      <span class="meter beat" id="mBeat"><i></i></span>
+    </div>
+    <button class="btn" id="tickBtn" type="button" aria-pressed="false">Tick</button>
+    <button class="btn" id="trackBtn" type="button">Play Agony</button>
+    <button class="btn" id="demoBtn" type="button" aria-pressed="false">Demo beat</button>
+    <button class="btn" id="loadBtn" type="button">Load audio</button>
+    <button class="btn" id="playBtn" type="button" hidden>Pause</button>
+    <input id="fileIn" type="file" accept="audio/*" hidden>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/shaders/CopyShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/shaders/LuminosityHighPassShader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/Pass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/ShaderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/MaskPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/EffectComposer.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/RenderPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/postprocessing/UnrealBloomPass.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.2/dist/lil-gui.umd.min.js"></script>
+<script>
+(() => {
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const STORE_KEY = "triad-params-v1";
+
+  // ---------- Parameters ----------
+  const DEFAULTS = {
+    // Rhythm
+    tempo: 100, direction: "Clockwise", drive: "Tempo", fade: 0.65, attack: 30, release: 6,
+    // Shape
+    corners: 3, radius: 2.3, edgeWidth: 0.018, edgeColor: "#1a4fb0", edgeIdle: 0.4, edgeLit: 0.9,
+    ghosts: true, ghostSpin: 1, ghostOpacity: 0.16,
+    // Nodes
+    nodeSize: 0.17, idleColor: "#0b2a6b", midColor: "#2f7dff", litColor: "#d8f0ff",
+    grow: 0.6, glow: 0.35, breathe: 0.04,
+    // Comet
+    comet: true, cometLength: 0.35, cometSize: 0.32, cometColor: "#9fd4ff", cometStart: 0.35,
+    // Scene
+    background: "#02040a", fog: 0.06, bloom: 1.1, bloomRadius: 0.7, bloomThreshold: 0.08,
+    dustCount: 1800, dustSize: 0.06, dustSpeed: 1, dustOpacity: 0.8, grid: true,
+    sway: 1, mouseTilt: 1, spin: 0, cameraDistance: 8,
+    // Tick sound
+    tickVolume: 0.55, tickPitch: 2100, tockPitch: 1250, accentFirst: true,
+    // Audio reactive
+    reactivity: 1, bassToSize: 1, bassToGlow: 1, midsToBloom: 1, highsToDust: 1,
+    beatFlash: 1, cameraPunch: 0.3, beatSensitivity: 1.35, demoVolume: 0.6,
+  };
+  const P = { ...DEFAULTS };
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
+    for (const k in saved) if (k in DEFAULTS && typeof saved[k] === typeof DEFAULTS[k]) P[k] = saved[k];
+  } catch (e) {}
+
+  const PRESETS = {
+    Glacier: {},
+    "Neon Orchid": { idleColor: "#3a0b4a", midColor: "#c13bff", litColor: "#ffe0ff", edgeColor: "#7a1fb0", cometColor: "#ff8af0", background: "#07020c", bloom: 1.5 },
+    Ember: { idleColor: "#4a1405", midColor: "#ff6a1f", litColor: "#fff1c9", edgeColor: "#a8360c", cometColor: "#ffb86b", background: "#0a0402", grid: false, bloom: 1.3 },
+    Minimal: { ghosts: false, comet: false, dustCount: 300, grid: false, bloom: 0.6, glow: 0.15, sway: 0.3 },
+    "Hex Drive": { corners: 6, radius: 2.5, idleColor: "#04303a", midColor: "#1fd8ff", litColor: "#e0fbff", edgeColor: "#0d7a99", cometColor: "#7af3ff", tempo: 132, spin: 0.08 },
+    Pulsar: { corners: 5, grow: 1.2, glow: 0.7, bloom: 1.8, bloomRadius: 0.9, cometLength: 0.6, reactivity: 1.6, cameraPunch: 0.7 },
+  };
+
+  // ---------- Renderer / scene ----------
+  const canvas = document.getElementById("stage");
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.FogExp2(0x02040a, P.fog);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+  camera.position.set(0, 0, P.cameraDistance);
+
+  const glowTex = (() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 128;
+    const g = c.getContext("2d");
+    const grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+    grd.addColorStop(0, "rgba(255,255,255,1)");
+    grd.addColorStop(0.2, "rgba(255,255,255,0.8)");
+    grd.addColorStop(0.5, "rgba(255,255,255,0.22)");
+    grd.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grd;
+    g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
+  })();
+  const additive = (opts) => ({ transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, ...opts });
+
+  const rig = new THREE.Group();
+  scene.add(rig);
+  const shapeGroup = new THREE.Group();
+  rig.add(shapeGroup);
+
+  // ---------- Shape (rebuilt when corner count / size changes) ----------
+  let verts = [], edges = [], nodes = [], ghosts = [], trail = [];
+  const TRAIL = 28;
+  const ROMAN = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII"];
+  const chipsEl = document.getElementById("chips");
+  let chips = [];
+
+  function disposeGroup(g) {
+    g.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material) o.material.dispose(); });
+    g.clear();
+  }
+
+  function build() {
+    disposeGroup(shapeGroup);
+    const N = P.corners, R = P.radius;
+    // Vertices run clockwise from the top
+    const raw = Array.from({ length: N }, (_, k) => {
+      const a = Math.PI / 2 - k * 2 * Math.PI / N;
+      return new THREE.Vector3(Math.cos(a) * R, Math.sin(a) * R, 0);
+    });
+    const ys = raw.map(v => v.y);
+    const off = -(Math.max(...ys) + Math.min(...ys)) / 2;
+    verts = raw.map(v => v.clone().setY(v.y + off));
+
+    edges = verts.map((a, i) => {
+      const b = verts[(i + 1) % N];
+      const curve = new THREE.LineCurve3(a, b);
+      const base = new THREE.Mesh(new THREE.TubeGeometry(curve, 1, P.edgeWidth, 8, false), new THREE.MeshBasicMaterial(additive({ opacity: P.edgeIdle })));
+      const halo = new THREE.Mesh(new THREE.TubeGeometry(curve, 1, P.edgeWidth * 3.3, 8, false), new THREE.MeshBasicMaterial(additive({ opacity: 0.05 })));
+      shapeGroup.add(base, halo);
+      return { base, halo };
+    });
+
+    ghosts = [0.62, 0.36, 1.35].map((s, k) => {
+      const pts = raw.map(v => v.clone().multiplyScalar(s));
+      pts.push(pts[0].clone());
+      const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), new THREE.LineBasicMaterial(additive({ opacity: 0.16 })));
+      line.position.y = off;
+      line.userData.spin = (k % 2 ? -1 : 1) * (0.05 + k * 0.03);
+      line.userData.weight = k === 2 ? 0.5 : 1;
+      shapeGroup.add(line);
+      return line;
+    });
+
+    nodes = verts.map(v => {
+      const g = new THREE.Group();
+      g.position.copy(v);
+      const core = new THREE.Mesh(new THREE.SphereGeometry(P.nodeSize, 32, 32), new THREE.MeshBasicMaterial({ color: 0x000000 }));
+      const shell = new THREE.Mesh(new THREE.SphereGeometry(P.nodeSize * 1.53, 32, 32), new THREE.MeshBasicMaterial(additive({ opacity: 0.1 })));
+      const halo = new THREE.Sprite(new THREE.SpriteMaterial(additive({ map: glowTex })));
+      g.add(core, shell, halo);
+      shapeGroup.add(g);
+      return { core, shell, halo, level: 0 };
+    });
+
+    trail = Array.from({ length: TRAIL }, () => {
+      const s = new THREE.Sprite(new THREE.SpriteMaterial(additive({ map: glowTex, opacity: 0 })));
+      shapeGroup.add(s);
+      return s;
+    });
+
+    chipsEl.innerHTML = verts.map((_, i) => `<span class="node">${ROMAN[i]}</span>`).join("");
+    chips = [...chipsEl.children];
+    stepCount = 0;
+    idx = 0;
+    stepStart = clock ? clock.elapsedTime : 0;
+    markChip();
+  }
+
+  // ---------- Dust + grid ----------
+  const MAX_DUST = 5000;
+  const dust = (() => {
+    const pos = new Float32Array(MAX_DUST * 3), col = new Float32Array(MAX_DUST * 3);
+    const c1 = new THREE.Color(0x1c3f8a), c2 = new THREE.Color(0x8fc6ff), c = new THREE.Color();
+    for (let i = 0; i < MAX_DUST; i++) {
+      const r = 1.5 + Math.pow(Math.random(), 0.6) * 9;
+      const th = Math.random() * Math.PI * 2;
+      const ph = Math.acos(2 * Math.random() - 1);
+      pos.set([r * Math.sin(ph) * Math.cos(th), r * Math.sin(ph) * Math.sin(th) * 0.7, r * Math.cos(ph) - 2], i * 3);
+      c.lerpColors(c1, c2, Math.random());
+      col.set([c.r, c.g, c.b], i * 3);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial(additive({ size: P.dustSize, map: glowTex, vertexColors: true, sizeAttenuation: true })));
+    scene.add(pts);
+    return pts;
+  })();
+
+  const grid = new THREE.GridHelper(40, 60, 0x0f2a5e, 0x0a1a3a);
+  grid.position.y = -2.6;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.35;
+  scene.add(grid);
+
+  // ---------- Post ----------
+  const composer = new THREE.EffectComposer(renderer);
+  composer.addPass(new THREE.RenderPass(scene, camera));
+  const bloom = new THREE.UnrealBloomPass(new THREE.Vector2(1, 1), P.bloom, P.bloomRadius, P.bloomThreshold);
+  composer.addPass(bloom);
+
+  let narrow = 1;
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight, a = w / h;
+    renderer.setSize(w, h, false);
+    composer.setSize(w, h);
+    camera.aspect = a;
+    narrow = a < 0.8 ? 0.62 / Math.max(a, 0.45) + 0.375 : 1;
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener("resize", resize);
+
+  // ---------- Audio ----------
+  let actx = null, analyser = null, freq = null, noiseBuf = null, hatBuf = null, demoGain = null;
+  let tickOn = false, demoOn = false, audioEl = null, fileUrl = null, filePlaying = false;
+  let nextDemo = 0, demoBeat = 0;
+  const DEMO_NOTES = [110, 138.6, 164.8, 207.7, 123.5, 155.6];
+
+  function ensureAudio() {
+    if (actx) return;
+    actx = new (window.AudioContext || window.webkitAudioContext)();
+    analyser = actx.createAnalyser();
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.55;
+    analyser.connect(actx.destination);
+    freq = new Uint8Array(analyser.frequencyBinCount);
+    demoGain = actx.createGain();
+    demoGain.connect(analyser);
+    const mk = (secs, pow) => {
+      const b = actx.createBuffer(1, Math.floor(actx.sampleRate * secs), actx.sampleRate);
+      const d = b.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, pow);
+      return b;
+    };
+    noiseBuf = mk(0.04, 4);
+    hatBuf = mk(0.09, 6);
+  }
+
+  // Clock tick goes straight to the speakers so it never feeds the beat detector
+  function tick(i) {
+    if (!tickOn || !actx) return;
+    const now = actx.currentTime;
+    const tock = P.accentFirst && i === 0;
+    const out = actx.createGain();
+    out.gain.value = P.tickVolume;
+    out.connect(actx.destination);
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf;
+    const bp = actx.createBiquadFilter();
+    bp.type = "bandpass";
+    bp.frequency.value = (tock ? P.tockPitch : P.tickPitch) * 1.5;
+    bp.Q.value = 6;
+    src.connect(bp).connect(out);
+    src.start(now);
+    const osc = actx.createOscillator(), og = actx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(tock ? P.tockPitch : P.tickPitch, now);
+    og.gain.setValueAtTime(0.35, now);
+    og.gain.exponentialRampToValueAtTime(0.0001, now + (tock ? 0.06 : 0.035));
+    osc.connect(og).connect(out);
+    osc.start(now);
+    osc.stop(now + 0.08);
+  }
+
+  // Built-in groove so the reactive side works without loading a file
+  function demoKick(t0, accent) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.setValueAtTime(accent ? 170 : 150, t0);
+    o.frequency.exponentialRampToValueAtTime(42, t0 + 0.14);
+    g.gain.setValueAtTime(accent ? 1 : 0.8, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + 0.4);
+    o.connect(g).connect(demoGain);
+    o.start(t0); o.stop(t0 + 0.42);
+  }
+  function demoHat(t0) {
+    const s = actx.createBufferSource(), hp = actx.createBiquadFilter(), g = actx.createGain();
+    s.buffer = hatBuf;
+    hp.type = "highpass"; hp.frequency.value = 7000;
+    g.gain.value = 0.28;
+    s.connect(hp).connect(g).connect(demoGain);
+    s.start(t0);
+  }
+  function demoPluck(t0, f, len) {
+    const o = actx.createOscillator(), lp = actx.createBiquadFilter(), g = actx.createGain();
+    o.type = "sawtooth"; o.frequency.value = f * 2;
+    lp.type = "lowpass"; lp.frequency.setValueAtTime(2400, t0); lp.frequency.exponentialRampToValueAtTime(300, t0 + len);
+    g.gain.setValueAtTime(0.12, t0); g.gain.exponentialRampToValueAtTime(0.001, t0 + len);
+    o.connect(lp).connect(g).connect(demoGain);
+    o.start(t0); o.stop(t0 + len + 0.02);
+  }
+  function scheduleDemo() {
+    const spb = 60 / P.tempo;
+    demoGain.gain.value = P.demoVolume;
+    while (nextDemo < actx.currentTime + 0.12) {
+      const accent = demoBeat % P.corners === 0;
+      demoKick(nextDemo, accent);
+      demoHat(nextDemo + spb / 2);
+      if (demoBeat % 4 === 3) demoHat(nextDemo + spb * 0.75);
+      demoPluck(nextDemo + spb / 2, DEMO_NOTES[demoBeat % DEMO_NOTES.length], spb * 0.45);
+      nextDemo += spb;
+      demoBeat++;
+    }
+  }
+
+  const audioActive = () => actx && (demoOn || filePlaying);
+  function band(lo, hi) {
+    const hz = actx.sampleRate / analyser.fftSize;
+    const a = Math.max(1, Math.floor(lo / hz)), b = Math.min(freq.length - 1, Math.ceil(hi / hz));
+    let s = 0;
+    for (let i = a; i <= b; i++) s += freq[i];
+    return s / ((b - a + 1) * 255);
+  }
+
+  // ---------- HUD buttons ----------
+  const $ = id => document.getElementById(id);
+  const tickBtn = $("tickBtn"), demoBtn = $("demoBtn"), loadBtn = $("loadBtn"), playBtn = $("playBtn"), fileIn = $("fileIn");
+  const statusEl = $("status");
+  const press = (btn, on) => btn.setAttribute("aria-pressed", String(on));
+
+  tickBtn.addEventListener("click", () => {
+    ensureAudio(); actx.resume();
+    tickOn = !tickOn; press(tickBtn, tickOn);
+  });
+  function setDemo(on) {
+    demoOn = on; press(demoBtn, on);
+    if (on) {
+      ensureAudio(); actx.resume();
+      if (filePlaying) { audioEl.pause(); }
+      nextDemo = actx.currentTime + 0.05; demoBeat = 0;
+      setDrive("Audio beats");
+    }
+    updateStatus();
+  }
+  demoBtn.addEventListener("click", () => setDemo(!demoOn));
+  loadBtn.addEventListener("click", () => fileIn.click());
+  fileIn.addEventListener("change", () => { if (fileIn.files[0]) loadFile(fileIn.files[0]); fileIn.value = ""; });
+  playBtn.addEventListener("click", () => { if (!audioEl) return; audioEl.paused ? (actx.resume(), audioEl.play()) : audioEl.pause(); });
+
+  let fileName = "";
+  function loadFile(file) {
+    if (!file.type.startsWith("audio") && !/\.(mp3|wav|ogg|m4a|flac|aac|webm)$/i.test(file.name)) return;
+    if (fileUrl) URL.revokeObjectURL(fileUrl);
+    fileUrl = URL.createObjectURL(file);
+    playSource(fileUrl, file.name.replace(/\.[^.]+$/, ""));
+  }
+  // P.ND3R – Agony (mastered), bundled with the page
+  $("trackBtn").addEventListener("click", () => {
+    if (audioEl && fileName === "Agony" && !audioEl.paused) { audioEl.pause(); return; }
+    if (audioEl && fileName === "Agony") { actx.resume(); audioEl.play(); return; }
+    playSource("agony.mp3", "Agony");
+  });
+  function playSource(url, name) {
+    ensureAudio(); actx.resume();
+    if (!audioEl) {
+      audioEl = new Audio();
+      audioEl.loop = true;
+      actx.createMediaElementSource(audioEl).connect(analyser);
+      audioEl.addEventListener("play", () => { filePlaying = true; playBtn.textContent = "Pause"; if (demoOn) setDemo(false); syncTrackBtn(); updateStatus(); });
+      audioEl.addEventListener("pause", () => { filePlaying = false; playBtn.textContent = "Play"; syncTrackBtn(); updateStatus(); });
+    }
+    fileName = name;
+    audioEl.src = url;
+    audioEl.play().catch(() => {});
+    playBtn.hidden = false;
+    setDrive("Audio beats");
+  }
+  function syncTrackBtn() {
+    const on = filePlaying && fileName === "Agony";
+    $("trackBtn").textContent = on ? "Pause Agony" : "Play Agony";
+    press($("trackBtn"), on);
+  }
+  const drop = $("drop");
+  window.addEventListener("dragover", e => { e.preventDefault(); drop.classList.add("show"); });
+  window.addEventListener("dragleave", e => { if (e.target === document.documentElement || !e.relatedTarget) drop.classList.remove("show"); });
+  window.addEventListener("drop", e => { e.preventDefault(); drop.classList.remove("show"); const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+
+  function updateStatus() {
+    const dir = P.direction === "Clockwise" ? "Clockwise" : "Counter-clockwise";
+    const src = filePlaying ? `reacting to ${fileName}` : demoOn ? "reacting to demo beat" : `tempo ${P.tempo} bpm`;
+    statusEl.textContent = `${dir} · ${src}`;
+  }
+
+  // ---------- Settings panel ----------
+  const gui = new lil.GUI({ title: "Parameters" });
+  if (window.innerWidth < 700) gui.close();
+  const ctrl = {};
+  const add = (f, key, ...args) => (ctrl[key] = f.add(P, key, ...args));
+  const addC = (f, key) => (ctrl[key] = f.addColor(P, key));
+
+  const actions = {
+    preset: "Glacier",
+    randomize() {
+      const h = Math.random();
+      const hsl = (s, l, dh = 0) => "#" + new THREE.Color().setHSL((h + dh + 1) % 1, s, l).getHexString();
+      Object.assign(P, {
+        corners: 3 + Math.floor(Math.random() * 4),
+        idleColor: hsl(0.8, 0.12), midColor: hsl(0.95, 0.55), litColor: hsl(0.9, 0.9),
+        edgeColor: hsl(0.8, 0.32, 0.03), cometColor: hsl(1, 0.72, -0.04), background: hsl(0.6, 0.02),
+        grow: 0.3 + Math.random() * 1, glow: 0.15 + Math.random() * 0.6, bloom: 0.7 + Math.random() * 1.2,
+        cometLength: 0.15 + Math.random() * 0.6, ghostSpin: Math.random() * 3, spin: Math.random() < 0.3 ? (Math.random() - 0.5) * 0.3 : 0,
+        tempo: 70 + Math.floor(Math.random() * 100),
+      });
+      refreshAll(true);
+    },
+    reset() { Object.assign(P, DEFAULTS); actions.preset = "Glacier"; refreshAll(true); },
+  };
+
+  const fPre = gui.addFolder("Presets");
+  fPre.add(actions, "preset", Object.keys(PRESETS)).name("Preset").onChange(name => {
+    Object.assign(P, DEFAULTS, PRESETS[name]);
+    refreshAll(true);
+  });
+  fPre.add(actions, "randomize").name("Randomize");
+  fPre.add(actions, "reset").name("Reset to default");
+
+  const fRhythm = gui.addFolder("Rhythm");
+  add(fRhythm, "tempo", 30, 300, 1).name("Tempo (bpm)").onChange(updateStatus);
+  add(fRhythm, "direction", ["Clockwise", "Counter-clockwise"]).name("Direction").onChange(updateStatus);
+  add(fRhythm, "drive", ["Tempo", "Audio beats"]).name("Step on");
+  add(fRhythm, "fade", 0, 1, 0.01).name("Fade during step");
+  add(fRhythm, "attack", 2, 60, 1).name("Light-up speed");
+  add(fRhythm, "release", 0.5, 30, 0.5).name("Fade-out speed");
+
+  const fShape = gui.addFolder("Shape");
+  add(fShape, "corners", 3, 8, 1).name("Corners").onFinishChange(build);
+  add(fShape, "radius", 1, 4, 0.05).name("Size").onFinishChange(build);
+  add(fShape, "edgeWidth", 0.004, 0.08, 0.002).name("Edge thickness").onFinishChange(build);
+  addC(fShape, "edgeColor").name("Edge color");
+  add(fShape, "edgeIdle", 0, 1, 0.01).name("Edge brightness");
+  add(fShape, "edgeLit", 0, 1.5, 0.01).name("Active edge brightness");
+  add(fShape, "ghosts").name("Inner shapes");
+  add(fShape, "ghostSpin", -4, 4, 0.05).name("Inner shape spin");
+  add(fShape, "ghostOpacity", 0, 0.6, 0.01).name("Inner shape opacity");
+
+  const fNodes = gui.addFolder("Nodes");
+  add(fNodes, "nodeSize", 0.05, 0.5, 0.01).name("Dot size").onFinishChange(build);
+  addC(fNodes, "idleColor").name("Resting color");
+  addC(fNodes, "midColor").name("Warming color");
+  addC(fNodes, "litColor").name("Lit color");
+  add(fNodes, "grow", 0, 2, 0.01).name("Grow when lit");
+  add(fNodes, "glow", 0, 1.5, 0.01).name("Glow when lit");
+  add(fNodes, "breathe", 0, 0.2, 0.005).name("Breathing");
+
+  const fComet = gui.addFolder("Comet");
+  add(fComet, "comet").name("Show comet");
+  addC(fComet, "cometColor").name("Color");
+  add(fComet, "cometLength", 0.02, 1, 0.01).name("Tail length");
+  add(fComet, "cometSize", 0.05, 1, 0.01).name("Head size");
+  add(fComet, "cometStart", 0, 0.9, 0.01).name("Launch point in step");
+
+  const fScene = gui.addFolder("Scene");
+  addC(fScene, "background").name("Background");
+  add(fScene, "fog", 0, 0.2, 0.005).name("Fog");
+  add(fScene, "bloom", 0, 3, 0.01).name("Bloom");
+  add(fScene, "bloomRadius", 0, 1.5, 0.01).name("Bloom radius");
+  add(fScene, "bloomThreshold", 0, 0.8, 0.01).name("Bloom threshold");
+  add(fScene, "dustCount", 0, MAX_DUST, 50).name("Dust particles");
+  add(fScene, "dustSize", 0.01, 0.25, 0.005).name("Dust size");
+  add(fScene, "dustOpacity", 0, 1, 0.01).name("Dust opacity");
+  add(fScene, "dustSpeed", 0, 8, 0.1).name("Dust drift");
+  add(fScene, "grid").name("Floor grid");
+  add(fScene, "sway", 0, 3, 0.05).name("Idle sway");
+  add(fScene, "mouseTilt", 0, 3, 0.05).name("Mouse tilt");
+  add(fScene, "spin", -1, 1, 0.01).name("Spin");
+  add(fScene, "cameraDistance", 4, 16, 0.1).name("Camera distance");
+
+  const fTick = gui.addFolder("Tick sound");
+  add(fTick, "tickVolume", 0, 1, 0.01).name("Volume");
+  add(fTick, "tickPitch", 400, 5000, 10).name("Tick pitch (Hz)");
+  add(fTick, "tockPitch", 200, 4000, 10).name("Tock pitch (Hz)");
+  add(fTick, "accentFirst").name("Tock on node I");
+
+  const fAudio = gui.addFolder("Audio reactive");
+  add(fAudio, "reactivity", 0, 3, 0.01).name("Overall reactivity");
+  add(fAudio, "bassToSize", 0, 3, 0.01).name("Bass → dot size");
+  add(fAudio, "bassToGlow", 0, 3, 0.01).name("Bass → glow");
+  add(fAudio, "midsToBloom", 0, 3, 0.01).name("Mids → bloom");
+  add(fAudio, "highsToDust", 0, 3, 0.01).name("Highs → dust");
+  add(fAudio, "beatFlash", 0, 3, 0.01).name("Beat flash");
+  add(fAudio, "cameraPunch", 0, 2, 0.01).name("Beat camera punch");
+  add(fAudio, "beatSensitivity", 1.05, 2.5, 0.01).name("Beat threshold");
+  add(fAudio, "demoVolume", 0, 1, 0.01).name("Demo beat volume");
+
+  [fShape, fNodes, fComet, fScene, fTick, fAudio].forEach(f => f.close());
+
+  function setDrive(v) { P.drive = v; ctrl.drive.updateDisplay(); save(); }
+  function refreshAll(rebuild) {
+    gui.controllersRecursive().forEach(c => c.updateDisplay());
+    if (rebuild) build();
+    updateStatus();
+    save();
+  }
+  let saveTimer = 0;
+  function save() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { try { localStorage.setItem(STORE_KEY, JSON.stringify(P)); } catch (e) {} }, 300);
+  }
+  gui.onFinishChange(save);
+
+  // ---------- Loop ----------
+  const clock = new THREE.Clock();
+  let stepCount = 0, idx = 0, stepStart = 0, stepLen = 60 / P.tempo;
+  let bass = 0, mid = 0, high = 0, bassAvg = 0.05, lastBeat = -10, beatPulse = 0;
+  const mouse = { x: 0, y: 0 };
+  window.addEventListener("pointermove", e => {
+    mouse.x = e.clientX / window.innerWidth - 0.5;
+    mouse.y = e.clientY / window.innerHeight - 0.5;
+  });
+
+  function markChip() { chips.forEach((c, i) => c.classList.toggle("on", i === idx)); }
+  function advance(t) {
+    const N = P.corners;
+    stepCount++;
+    idx = P.direction === "Clockwise" ? stepCount % N : (N - stepCount % N) % N;
+    stepStart = t;
+    tick(idx);
+    markChip();
+  }
+
+  const cIdle = new THREE.Color(), cMid = new THREE.Color(), cLit = new THREE.Color(), tmp = new THREE.Vector3();
+  const meters = ["mBass", "mMid", "mHigh", "mBeat"].map(id => $(id).firstElementChild);
+  const ease = t => 1 - Math.pow(1 - t, 3);
+
+  build();
+  resize();
+  updateStatus();
+
+  function frame() {
+    const dt = Math.min(clock.getDelta(), 0.05);
+    const t = clock.elapsedTime;
+    const N = P.corners;
+    const motion = reduceMotion ? 0.2 : 1;
+
+    // Audio analysis
+    let beat = false;
+    if (audioActive()) {
+      if (demoOn) scheduleDemo();
+      analyser.getByteFrequencyData(freq);
+      const rb = band(30, 150), rm = band(150, 2000), rh = band(2000, 10000);
+      bass += (rb - bass) * (rb > bass ? 0.6 : 0.12);
+      mid += (rm - mid) * (rm > mid ? 0.5 : 0.1);
+      high += (rh - high) * (rh > high ? 0.6 : 0.15);
+      if (rb > bassAvg * P.beatSensitivity && rb > 0.12 && t - lastBeat > 0.16) { beat = true; lastBeat = t; beatPulse = 1; }
+      bassAvg += (rb - bassAvg) * 0.04;
+    } else {
+      bass *= 0.9; mid *= 0.9; high *= 0.9;
+    }
+    beatPulse = Math.max(0, beatPulse - dt * 4);
+    const react = P.reactivity;
+    meters[0].style.transform = `scaleY(${Math.min(1, bass * 1.4)})`;
+    meters[1].style.transform = `scaleY(${Math.min(1, mid * 2)})`;
+    meters[2].style.transform = `scaleY(${Math.min(1, high * 4)})`;
+    meters[3].style.transform = `scaleY(${beatPulse})`;
+
+    // Stepping: on beats when audio is driving, otherwise on tempo
+    const useBeats = P.drive === "Audio beats" && audioActive() && t - lastBeat < 2.5;
+    if (useBeats) {
+      if (beat) {
+        const gap = t - stepStart;
+        if (gap > 0.15 && gap < 2.5) stepLen += (gap - stepLen) * 0.5;
+        advance(t);
+      }
+    } else {
+      stepLen = 60 / P.tempo;
+      if (t - stepStart >= stepLen) advance(t - stepStart > stepLen * 2 ? t : stepStart + stepLen);
+    }
+    const local = THREE.MathUtils.clamp((t - stepStart) / stepLen, 0, 1);
+    const cw = P.direction === "Clockwise";
+    const next = cw ? (idx + 1) % N : (idx - 1 + N) % N;
+
+    // Nodes
+    cIdle.set(P.idleColor); cMid.set(P.midColor); cLit.set(P.litColor);
+    const flash = beatPulse * P.beatFlash * react * 0.25;
+    nodes.forEach((n, i) => {
+      const lit = i === idx;
+      const target = Math.min(1, (lit ? Math.max(1 - P.fade, 1 - local * P.fade) : 0) + flash);
+      n.level += (target - n.level) * Math.min(1, dt * (target > n.level ? P.attack : P.release));
+      const L = n.level;
+      n.core.material.color.copy(cIdle).lerp(cMid, Math.min(1, L * 2)).lerp(cLit, Math.max(0, L * 1.4 - 0.4));
+      const breathe = 1 + Math.sin(t * 2 + i * 2.1) * P.breathe;
+      n.core.scale.setScalar((1 + L * P.grow + bass * P.bassToSize * react * 0.6) * breathe);
+      n.shell.material.color.copy(cMid);
+      n.shell.material.opacity = 0.06 + L * 0.3 * P.glow;
+      n.shell.scale.setScalar(1 + L * P.grow);
+      n.halo.material.color.copy(cMid).lerp(cLit, L * 0.5);
+      const bg = bass * P.bassToGlow * react;
+      n.halo.material.opacity = Math.min(1, 0.2 + L * P.glow + bg * 0.4);
+      n.halo.scale.setScalar(0.8 + L * 2 * P.glow + bg * 1.2);
+    });
+
+    // Edges
+    const activeEdge = cw ? idx : (idx - 1 + N) % N;
+    edges.forEach((e, i) => {
+      const on = i === activeEdge ? 1 : 0;
+      const target = P.edgeIdle + on * (P.edgeLit - P.edgeIdle) + beatPulse * 0.3 * react * P.beatFlash;
+      e.base.material.color.set(P.edgeColor);
+      e.halo.material.color.set(P.edgeColor);
+      e.base.material.opacity += (target - e.base.material.opacity) * Math.min(1, dt * 8);
+      e.halo.material.opacity = e.base.material.opacity * 0.15;
+    });
+
+    // Comet
+    const a = verts[idx], b = verts[next];
+    const travel = P.comet ? THREE.MathUtils.clamp((local - P.cometStart) / (1 - P.cometStart), 0, 1) : 0;
+    trail.forEach((s, k) => {
+      const p = travel - k / TRAIL * P.cometLength;
+      if (travel <= 0 || p < 0) { s.material.opacity = 0; return; }
+      s.position.copy(tmp.lerpVectors(a, b, ease(p)));
+      const fade = 1 - k / TRAIL;
+      s.material.color.set(P.cometColor);
+      s.material.opacity = fade * fade * 0.9;
+      s.scale.setScalar(0.08 + fade * P.cometSize);
+    });
+
+    // Ghosts
+    ghosts.forEach(g => {
+      g.visible = P.ghosts;
+      g.material.color.set(P.edgeColor);
+      g.material.opacity = P.ghostOpacity * g.userData.weight * (1 + beatPulse * react);
+      g.rotation.z += g.userData.spin * P.ghostSpin * dt * motion;
+    });
+
+    // Dust, grid, background
+    dust.geometry.setDrawRange(0, P.dustCount);
+    dust.material.size = P.dustSize * (1 + high * P.highsToDust * react * 3);
+    dust.material.opacity = P.dustOpacity;
+    dust.rotation.y += dt * 0.015 * P.dustSpeed * motion * (1 + high * P.highsToDust * react * 4);
+    dust.rotation.x = Math.sin(t * 0.05) * 0.05;
+    grid.visible = P.grid;
+    grid.position.z = (t * 0.4 * P.sway * motion) % (40 / 60);
+    renderer.setClearColor(P.background, 1);
+    scene.fog.color.set(P.background);
+    scene.fog.density = P.fog;
+
+    // Camera + rig
+    const sway = P.sway * (reduceMotion ? 0 : 1);
+    rig.rotation.y += ((mouse.x * 0.5 * P.mouseTilt + Math.sin(t * 0.3) * 0.12 * sway) - rig.rotation.y) * 0.04;
+    rig.rotation.x += ((mouse.y * 0.35 * P.mouseTilt + Math.sin(t * 0.23) * 0.06 * sway) - rig.rotation.x) * 0.04;
+    shapeGroup.rotation.z -= P.spin * dt * motion;
+    rig.position.y = Math.sin(t * 0.6) * 0.06 * sway;
+    camera.position.z = P.cameraDistance * narrow - beatPulse * P.cameraPunch * react * 0.6;
+
+    bloom.strength = P.bloom + (nodes[idx] ? nodes[idx].level * 0.2 : 0) + mid * P.midsToBloom * react * 1.5 + beatPulse * 0.25 * react;
+    bloom.radius = P.bloomRadius;
+    bloom.threshold = P.bloomThreshold;
+
+    composer.render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
