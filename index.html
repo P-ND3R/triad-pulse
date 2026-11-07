@@ -151,7 +151,7 @@
     dustCount: 1800, dustSize: 0.06, dustSpeed: 1, dustOpacity: 0.8, grid: true,
     sway: 1, mouseTilt: 1, spin: 0, cameraDistance: 8,
     // Tick sound
-    tickVolume: 0.55, tickPitch: 2100, tockPitch: 1250, accentFirst: true,
+    tickVolume: 0.55, tickPitch: 2100, tockPitch: 1250, tickMode: "Tic-toc",
     // Audio reactive
     reactivity: 1, bassToSize: 1, bassToGlow: 1, midsToBloom: 1, highsToDust: 1,
     beatFlash: 1, cameraPunch: 0.3, beatSensitivity: 1.35, demoVolume: 0.6,
@@ -344,7 +344,10 @@
   function tick(i) {
     if (!tickOn || !actx) return;
     const now = actx.currentTime;
-    const tock = P.accentFirst && i === 0;
+    // Tic-toc alternates on every step, whatever the corner count
+    const tock = P.tickMode === "Tic-toc" ? stepCount % 2 === 1
+      : P.tickMode === "Tock on node I" ? i === 0
+      : false;
     const out = actx.createGain();
     out.gain.value = P.tickVolume;
     out.connect(actx.destination);
@@ -572,7 +575,7 @@
   add(fTick, "tickVolume", 0, 1, 0.01).name("Volume");
   add(fTick, "tickPitch", 400, 5000, 10).name("Tick pitch (Hz)");
   add(fTick, "tockPitch", 200, 4000, 10).name("Tock pitch (Hz)");
-  add(fTick, "accentFirst").name("Tock on node I");
+  add(fTick, "tickMode", ["Tic-toc", "Tock on node I", "Tic only"]).name("Pattern");
 
   const fAudio = gui.addFolder("Audio reactive");
   add(fAudio, "reactivity", 0, 3, 0.01).name("Overall reactivity");
